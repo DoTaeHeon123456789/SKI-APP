@@ -1,0 +1,100 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    match /phone_index/{phone} {
+      allow get: if true;
+      allow list: if false;
+      allow create, update: if isSignedIn()
+        && incoming().phone is string && incoming().phone.size() <= 30
+        && incoming().maskedEmail is string && incoming().maskedEmail.size() <= 256;
+      allow delete: if isSignedIn();
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow list: if isSignedIn() && resource.data.uid == request.auth.uid;
+
+      allow create: if isOwner(userId)
+        && incoming().uid == request.auth.uid
+        && incoming().email is string && incoming().email.size() <= 256
+        && incoming().gender in ['male', 'female']
+        && incoming().age is number && incoming().age >= 5 && incoming().age <= 120
+        && incoming().height is number && incoming().height >= 50 && incoming().height <= 250
+        && incoming().weight is number && incoming().weight >= 20 && incoming().weight <= 300
+        && incoming().phone is string && incoming().phone.size() <= 30;
+
+      allow update: if isOwner(userId)
+        && incoming().uid == existing().uid
+        && (!('gender' in incoming()) || incoming().gender in ['male', 'female'])
+        && (!('age' in incoming()) || (incoming().age is number && incoming().age >= 5 && incoming().age <= 120))
+        && (!('height' in incoming()) || (incoming().height is number && incoming().height >= 50 && incoming().height <= 250))
+        && (!('weight' in incoming()) || (incoming().weight is number && incoming().weight >= 20 && incoming().weight <= 300));
+
+      allow delete: if isOwner(userId);
+    }
+
+    match /measurements/{measurementId} {
+      allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+
+      allow create: if isSignedIn()
+        && incoming().userId == request.auth.uid
+        && incoming().age is number
+        && incoming().gender in ['male', 'female']
+        && incoming().height is number
+        && incoming().weight is number
+        && incoming().ageGroup in ['child', 'youth', 'adult', 'senior']
+        && incoming().totalScore is number
+        && incoming().overallGrade is string && incoming().overallGrade.size() <= 30;
+
+      allow update: if isSignedIn()
+        && existing().userId == request.auth.uid
+        && incoming().userId == existing().userId;
+
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    function validSkiMember(data, userId) {
+      let fields = ['uid', 'email', 'name', 'phone', 'active', 'points', 'history'];
+      return data.keys().hasAll(fields) && data.keys().hasOnly(fields)
+        && data.uid == userId
+        && data.email is string && data.email.size() <= 256
+        && data.email == request.auth.token.email
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 100
+        && data.phone is string && data.phone.size() >= 1 && data.phone.size() <= 30
+        && (data.active == null || data.active is map)
+        && data.points is int && data.points >= 0
+        && data.history is list;
+    }
+
+    // Ski app profile, active rental, points and demo payment history.
+    match /ski_members/{userId} {
+      allow get: if isOwner(userId);
+      allow create, update: if isOwner(userId) && validSkiMember(incoming(), userId);
+    }
+  }
+}
